@@ -108,7 +108,11 @@ async function availability(req, res, url, cookies, send) {
     await collection.updateOne({_id:selected+'|'+email},{$set:{name,email,month:selected,expiresAt,tokenHash:hash(token)}},{upsert:true});
     const link = RENDER_EXTERNAL_URL+'/availability/respond?token='+token;
     const draft = 'mailto:'+encodeURIComponent(email)+'?subject='+encodeURIComponent('Your availability for '+monthLabel(selected))+'&body='+encodeURIComponent('Please mark your availability using your personal link: '+link);
-    invitation = '<p>Copy this personal link or send it by email. Generating a new link for this employee and month replaces the previous link.</p><p><code>'+escapeHtml(link)+'</code></p><p><a href="'+escapeHtml(draft)+'">Open invitation email draft</a></p>';
+    const gmail = 'https://mail.google.com/mail/?' + new URLSearchParams({
+      view: 'cm', fs: '1', to: email, su: 'Your availability for ' + monthLabel(selected),
+      body: 'Please mark your availability using your personal link: ' + link
+    });
+    invitation = '<p>Copy this personal link or send it by email. Generating a new link for this employee and month replaces the previous link.</p><p><code>'+escapeHtml(link)+'</code></p><p><a href="'+escapeHtml(draft)+'">Open in mail app</a> · <a target="_blank" rel="noopener noreferrer" href="'+escapeHtml(gmail)+'">Open in Gmail</a></p>';
   }
   const people = await collection.find({week:selected},{projection:{name:1,email:1,values:1}}).sort({name:1}).toArray();
   const rows = people.map(person=>'<tr><th>'+escapeHtml(person.name)+'<br>'+escapeHtml(person.email)+'</th>'+days.map((_,i)=>'<td>'+({available:'Available',unavailable:'Unavailable'}[person.values?.[i]]||'No response')+'</td>').join('')+'</tr>').join('');
