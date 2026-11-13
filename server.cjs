@@ -47,10 +47,18 @@ function week(value) {
   if (!Number.isFinite(+date) || date.getUTCDay() !== 1 || date.toISOString().slice(0,10) !== value) return null;
   return Array.from({length:7}, (_, i) => new Date(+date + i*86400000).toISOString().slice(0,10));
 }
-function nextMonday() {
-  const now = new Date(new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Copenhagen',dateStyle:'short'}).format(new Date())+'T00:00:00Z');
-  now.setUTCDate(now.getUTCDate() + ((8-now.getUTCDay())%7 || 7));
-  return now.toISOString().slice(0,10);
+function monthDays(value) {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value || '')) return null;
+  const start = new Date(value+'-01T00:00:00Z');
+  const end = new Date(start);
+  end.setUTCMonth(end.getUTCMonth()+1);
+  return Array.from({length:(end-start)/86400000},(_,i)=>new Date(+start+i*86400000).toISOString().slice(0,10));
+}
+function monthLabel(value) {
+  return new Intl.DateTimeFormat('en-GB',{month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(value+'-01T00:00:00Z'));
+}
+function currentMonth() {
+  return new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Copenhagen',dateStyle:'short'}).format(new Date()).slice(0,7);
 }
 async function availability(req, res, url, cookies, send) {
   const employee = url.pathname === '/availability/respond';
@@ -76,7 +84,7 @@ async function availability(req, res, url, cookies, send) {
     const key = hash(token);
     const invite = await collection.findOne({tokenHash:key});
     if (!invite || invite.expiresAt <= new Date()) return send(404,'This invitation is invalid or has expired.');
-    const days = week(invite.week);
+    const days = invite.month ? monthDays(invite.month) : week(invite.week);
     if (form) {
       const values = days.map(day => form.get(day));
       if (values.some(value => !['available','unavailable',''].includes(value))) return send(400,'Invalid availability.');
@@ -84,27 +92,27 @@ async function availability(req, res, url, cookies, send) {
       if (!result.matchedCount) return send(404,'This invitation has expired or been replaced.');
       return html('Availability saved','<p>Your manager can now see your responses. Use your personal invitation link to make changes.</p>');
     }
-    return html('Your availability','<p>'+escapeHtml(invite.name)+' · Week of '+invite.week+'</p><form method="post" action="/availability/respond"><input type="hidden" name="token" value="'+token+'">'+days.map((day,i)=>'<label>'+new Intl.DateTimeFormat('en-GB',{weekday:'long',day:'numeric',month:'short',timeZone:'UTC'}).format(new Date(day))+' <select name="'+day+'">'+[['','No response'],['available','Available'],['unavailable','Unavailable']].map(([value,label])=>'<option value="'+value+'"'+((invite.values?.[i]||'')===value?' selected':'')+'>'+label+'</option>').join('')+'</select></label>').join('')+'<button>Save availability</button></form>');
+    return html('Your availability','<p>'+escapeHtml(invite.name)+' · '+(invite.month ? monthLabel(invite.month) : 'Week of '+invite.week)+'</p><form method="post" action="/availability/respond"><input type="hidden" name="token" value="'+token+'">'+days.map((day,i)=>'<label>'+new Intl.DateTimeFormat('en-GB',{weekday:'long',day:'numeric',month:'short',timeZone:'UTC'}).format(new Date(day))+' <select name="'+day+'">'+[['','No response'],['available','Available'],['unavailable','Unavailable']].map(([value,label])=>'<option value="'+value+'"'+((invite.values?.[i]||'')===value?' selected':'')+'>'+label+'</option>').join('')+'</select></label>').join('')+'<button>Save availability</button></form>');
   }
-  const selected = (form || url.searchParams).get('week') || nextMonday();
-  const days = week(selected);
-  if (!days) return send(400,'Choose a Monday for the start of the week.');
+  const selected = (form || url.searchParams).get('month') || currentMonth();
+  const days = monthDays(selected);
+  if (!days) return send(400,'Choose a valid month.');
   let invitation = '';
   if (form) {
     const name = (form.get('name') || '').trim();
     const email = (form.get('email') || '').trim().toLowerCase();
     if (!name || name.length > 100 || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return send(400,'Enter a name and valid email address.');
-    const expiresAt = new Date(+new Date(days[6]) + 2*86400000);
-    if (expiresAt <= new Date()) return send(400,'Choose a current or upcoming week.');
+    const expiresAt = new Date(+new Date(days.at(-1)) + 2*86400000);
+    if (expiresAt <= new Date()) return send(400,'Choose a current or upcoming month.');
     const token = randomBytes(32).toString('hex');
-    await collection.updateOne({_id:selected+'|'+email},{$set:{name,email,week:selected,expiresAt,tokenHash:hash(token)}},{upsert:true});
+    await collection.updateOne({_id:selected+'|'+email},{$set:{name,email,month:selected,expiresAt,tokenHash:hash(token)}},{upsert:true});
     const link = RENDER_EXTERNAL_URL+'/availability/respond?token='+token;
-    const draft = 'mailto:'+encodeURIComponent(email)+'?subject='+encodeURIComponent('Your availability for '+selected)+'&body='+encodeURIComponent('Please mark your availability using your personal link: '+link);
-    invitation = '<p>Copy this personal link or send it by email. Generating a new link for this employee and week replaces the previous link.</p><p><code>'+escapeHtml(link)+'</code></p><p><a href="'+escapeHtml(draft)+'">Open invitation email draft</a></p>';
+    const draft = 'mailto:'+encodeURIComponent(email)+'?subject='+encodeURIComponent('Your availability for '+monthLabel(selected))+'&body='+encodeURIComponent('Please mark your availability using your personal link: '+link);
+    invitation = '<p>Copy this personal link or send it by email. Generating a new link for this employee and month replaces the previous link.</p><p><code>'+escapeHtml(link)+'</code></p><p><a href="'+escapeHtml(draft)+'">Open invitation email draft</a></p>';
   }
   const people = await collection.find({week:selected},{projection:{name:1,email:1,values:1}}).sort({name:1}).toArray();
   const rows = people.map(person=>'<tr><th>'+escapeHtml(person.name)+'<br>'+escapeHtml(person.email)+'</th>'+days.map((_,i)=>'<td>'+({available:'Available',unavailable:'Unavailable'}[person.values?.[i]]||'No response')+'</td>').join('')+'</tr>').join('');
-  return html('Team availability','<p><a href="/">Back to shift schedule</a></p><form method="get"><label>Week starting Monday <input type="date" name="week" value="'+selected+'" required></label><button>Show week</button></form><h2>Invite an employee</h2><form method="post"><input type="hidden" name="week" value="'+selected+'"><label>Employee <input name="name" maxlength="100" required></label><label>Email <input type="email" name="email" maxlength="254" required></label><button>Generate personal link</button></form>'+invitation+'<h2>Responses</h2>'+(rows?'<div class="scroll"><table><tr><th>Employee</th>'+days.map(day=>'<th>'+day.slice(5)+'</th>').join('')+'</tr>'+rows+'</table></div>':'<p>No invitations for this week yet.</p>'));
+  return html('Team availability','<p><a href="/">Back to shift schedule</a></p><form method="get"><label>Month <input type="month" name="month" value="'+selected+'" required></label><button>Show month</button></form><h2>Invite an employee</h2><form method="post"><input type="hidden" name="month" value="'+selected+'"><label>Employee <input name="name" maxlength="100" required></label><label>Email <input type="email" name="email" maxlength="254" required></label><button>Generate personal link</button></form>'+invitation+'<h2>Responses</h2>'+(rows?'<div class="scroll"><table><tr><th>Employee</th>'+days.map(day=>'<th>'+day.slice(5)+'</th>').join('')+'</tr>'+rows+'</table></div>':'<p>No invitations for this month yet.</p>'));
 }
 
 http.createServer(async (req, res) => {
