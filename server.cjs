@@ -114,7 +114,7 @@ async function availability(req, res, url, cookies, send) {
     });
     invitation = '<p>Copy this personal link or send it by email. Generating a new link for this employee and month replaces the previous link.</p><p><code>'+escapeHtml(link)+'</code></p><p><a href="'+escapeHtml(draft)+'">Open in mail app</a> · <a target="_blank" rel="noopener noreferrer" href="'+escapeHtml(gmail)+'">Open in Gmail</a></p>';
   }
-  const people = await collection.find({week:selected},{projection:{name:1,email:1,values:1}}).sort({name:1}).toArray();
+  const people = await collection.find({month:selected},{projection:{name:1,email:1,values:1}}).sort({name:1}).toArray();
   const rows = people.map(person=>'<tr><th>'+escapeHtml(person.name)+'<br>'+escapeHtml(person.email)+'</th>'+days.map((_,i)=>'<td>'+({available:'Available',unavailable:'Unavailable'}[person.values?.[i]]||'No response')+'</td>').join('')+'</tr>').join('');
   return html('Team availability','<p><a href="/">Back to shift schedule</a></p><form method="get"><label>Month <input type="month" name="month" value="'+selected+'" required></label><button>Show month</button></form><h2>Invite an employee</h2><form method="post"><input type="hidden" name="month" value="'+selected+'"><label>Employee <input name="name" maxlength="100" required></label><label>Email <input type="email" name="email" maxlength="254" required></label><button>Generate personal link</button></form>'+invitation+'<h2>Responses</h2>'+(rows?'<div class="scroll"><table><tr><th>Employee</th>'+days.map(day=>'<th>'+day.slice(5)+'</th>').join('')+'</tr>'+rows+'</table></div>':'<p>No invitations for this month yet.</p>'));
 }
