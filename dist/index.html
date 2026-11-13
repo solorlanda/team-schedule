@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Team Schedule</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f3f5f0;color:#172c23;font:16px system-ui}header{background:#19382c;color:white;padding:42px max(5vw,20px)}h1{font-size:clamp(32px,6vw,60px);margin:0;letter-spacing:-.05em}header p{color:#d5e5d9;margin-bottom:0}main{max-width:1100px;margin:auto;padding:24px 20px 60px}section{background:white;border:1px solid #dce4db;border-radius:18px;padding:22px;margin-bottom:18px}h2{margin:0 0 16px}button,a.action,input{font:inherit;border:1px solid #bccdc1;border-radius:9px;padding:9px 12px;background:white;color:inherit}button,a.action{cursor:pointer;text-decoration:none;display:inline-block}button.primary{background:#245741;color:white;border-color:#245741}label{display:grid;gap:5px;font-size:14px}input{width:100%;min-width:0}.row,form{display:flex;flex-wrap:wrap;gap:10px;align-items:end}form label{flex:1 1 130px}table{border-collapse:collapse;width:100%;min-width:570px;text-align:left}th,td{padding:12px 8px;border-bottom:1px solid #e1e8e0}small{display:block;color:#4b6156}.scroll{overflow:auto}#status{min-height:24px;color:#375947}.muted{color:#4b6156}.notice{border-bottom:1px solid #e1e8e0;padding:12px 0}.notice p{white-space:pre-line;margin:0 0 8px}
+</style>
+<header><h1>Team Schedule</h1><p>Plan the week and prepare shift updates for your team.</p></header>
+<main>
+<section><h2>Import from Excel</h2><div class="row"><button id="template">Download CSV template</button><button id="upload">Import CSV</button><input type="file" id="file" accept=".csv,text/csv" hidden></div><p class="muted">Open the template in Excel and save it as a UTF-8 CSV. Use one row per shift. For dates, use YYYY-MM-DD or day/month/year.</p><div id="status" role="status"></div></section>
+<section><h2 id="formTitle">Add shift</h2><form id="form">
+<label>Employee<input name="nombre" required></label><label>Email<input name="email" type="email" required></label><label>Date<input name="fecha" type="date" required></label><label>Start<input name="inicio" type="time" required></label><label>End<input name="fin" type="time" required></label><button class="primary">Save shift</button><button type="button" id="cancel" hidden>Cancel editing</button></form></section>
+<section><div class="row"><h2>Shift schedule</h2><label>Week of<input id="week" type="date"></label><button id="all">Show all</button></div><p id="range" class="muted"></p><div class="scroll"><table><thead><tr><th>Date</th><th>Employee</th><th>Hours</th><th>Actions</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+<section><h2>Pending notifications</h2><p class="muted">Open the draft in your email app, review it and send it. Shifts and notifications are saved in this browser.</p><div id="notices"></div></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const key='turnos-equipo-v1';
+let state={shifts:[],notices:[]};
+try{state=JSON.parse(localStorage.getItem(key))||state}catch{}
+let editing=null;
+const fields=['nombre','email','fecha','inicio','fin'];
+const csvFields=['employee','email','date','start','end'];
+const iso=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
+const monday=d=>{const m=new Date(d);m.setDate(m.getDate()-(m.getDay()+6)%7);return m};
+$('week').value=iso(monday(new Date()));
+function el(tag,value){const node=document.createElement(tag);node.textContent=value;return node}
+function button(title,fn){const b=el('button',title);b.onclick=fn;return b}
+function save(){try{localStorage.setItem(key,JSON.stringify(state))}catch{$('status').textContent='Your browser could not save the data.'}render()}
+const dateLabel=s=>new Intl.DateTimeFormat('en-GB',{weekday:'short',day:'numeric',month:'short',year:'numeric'}).format(new Date(s+'T12:00'));
+const shiftLabel=s=>dateLabel(s.fecha)+' · '+s.inicio+'–'+s.fin+(s.fin<s.inicio?' (+1 day)':'');
+function notice(s,subject,description){state.notices.unshift({id:crypto.randomUUID(),email:s.email,subject,body:'Hi '+s.nombre+',\n\n'+description+'\n\nThanks.'})}
+function render(){
+ const selected=$('week').value;
+ const start=selected?monday(new Date(selected+'T12:00')):null;
+ const end=start?new Date(start):null;
+ if(end)end.setDate(end.getDate()+6);
+ $('range').textContent=start?dateLabel(iso(start))+' to '+dateLabel(iso(end)):'All dates';
+ const rows=$('rows');rows.replaceChildren();
+ const shifts=state.shifts.filter(s=>!start||s.fecha>=iso(start)&&s.fecha<=iso(end)).sort((a,b)=>(a.fecha+a.inicio).localeCompare(b.fecha+b.inicio));
+ if(!shifts.length){const tr=el('tr','');const td=el('td','No shifts in this view yet.');td.colSpan=4;tr.append(td);rows.append(tr)}
+ for(const s of shifts){
+  const tr=el('tr',''), person=el('td',s.nombre), actions=el('td','');
+  person.append(el('small',s.email));
+  actions.append(button('Edit',()=>{editing=s.id;for(const f of fields)$('form').elements[f].value=s[f];$('formTitle').textContent='Edit shift';$('cancel').hidden=false;$('form').elements.nombre.focus()}),' ',button('Cancel shift',()=>{if(!confirm('Cancel the shift for '+s.nombre+'?'))return;state.shifts=state.shifts.filter(x=>x.id!==s.id);notice(s,'Shift cancelled','Your shift has been cancelled for '+shiftLabel(s)+'.');if(editing===s.id)reset();save()}));
+  tr.append(el('td',dateLabel(s.fecha)),person,el('td',s.inicio+'–'+s.fin+(s.fin<s.inicio?' (+1 day)':'')),actions);rows.append(tr)
+ }
+ const out=$('notices');out.replaceChildren();
+ if(!state.notices.length)out.append(el('p','No pending notifications.'));
+ const groups=Map.groupBy?Map.groupBy(state.notices,n=>n.email):state.notices.reduce((m,n)=>m.set(n.email,[...(m.get(n.email)||[]),n]),new Map());
+ for(const [email,items] of groups){
+  const card=el('div','');card.className='notice';card.append(el('p',email+' · '+items.length+' '+(items.length===1?'notification':'notifications')));
+  const details=el('details','');details.append(el('summary','View notifications'));items.forEach(n=>details.append(el('p',n.subject+'\n'+n.body)));card.append(details);
+  const subject='Your shift updates';
+  const body=[...items].reverse().map(n=>n.body).join('\n\n');
+  const draft=el('div','');draft.hidden=true;
+  const emailText=el('textarea','');emailText.readOnly=true;emailText.rows=8;emailText.style.width='100%';
+  emailText.setAttribute('aria-label','Email draft');emailText.value='To: '+email+'\nSubject: '+subject+'\n\n'+body;
+  const feedback=el('p','');feedback.setAttribute('role','status');
+  const copy=button('Copy draft',async()=>{
+   try{await navigator.clipboard.writeText(emailText.value);feedback.textContent='Draft copied.'}
+   catch{emailText.focus();emailText.select();feedback.textContent='Press Ctrl+C or Command+C to copy the selected draft.'}
+  });
+  const link=el('a','Open in mail app');link.className='action';link.href='mailto:'+encodeURIComponent(email)+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
+  const gmail=el('a','Open in Gmail');gmail.className='action';gmail.target='_blank';gmail.rel='noopener noreferrer';
+  gmail.href='https://mail.google.com/mail/?'+new URLSearchParams({view:'cm',fs:'1',to:email,su:subject,body});
+  draft.append(emailText,copy,' ',gmail,' ',link,feedback);
+  card.append(button('Open email draft',()=>{draft.hidden=false;emailText.focus()}),' ',button('Remove from pending',()=>{state.notices=state.notices.filter(n=>n.email!==email);save()}),draft);out.append(card)
+ }
+}
+function reset(){editing=null;$('form').reset();$('formTitle').textContent='Add shift';$('cancel').hidden=true}
+function valid(s){const d=new Date(s.fecha+'T12:00');return s.nombre&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.email)&&/^\d{4}-\d{2}-\d{2}$/.test(s.fecha)&&!isNaN(d)&&iso(d)===s.fecha&&[s.inicio,s.fin].every(t=>/^([01]\d|2[0-3]):[0-5]\d$/.test(t))&&s.inicio!==s.fin}
+function add(s){if(state.shifts.some(x=>fields.every(f=>x[f]===s[f])))return false;state.shifts.push({...s,id:crypto.randomUUID()});notice(s,'New shift','Your new shift is on '+shiftLabel(s)+'.');return true}
+$('form').onsubmit=e=>{e.preventDefault();const s=Object.fromEntries([...new FormData(e.target)].map(([k,v])=>[k,v.trim()]));s.email=s.email.toLowerCase();if(!valid(s)){alert('Check the email address, date and shift times.');return}
+ const old=state.shifts.find(x=>x.id===editing);
+ if(old&&fields.some(f=>old[f]!==s[f])){
+  if(state.shifts.some(x=>x.id!==old.id&&fields.every(f=>x[f]===s[f]))){alert('This shift already exists.');return}
+  if(old.email!==s.email){notice(old,'Shift cancelled','Your shift has been cancelled for '+shiftLabel(old)+'.');notice(s,'New shift','Your new shift is on '+shiftLabel(s)+'.')}
+  else notice(s,'Shift updated','Previous shift: '+shiftLabel(old)+'\nUpdated shift: '+shiftLabel(s));
+  Object.assign(old,s);
+ }else if(!old&&!add(s)){alert('This shift already exists.');return}
+ $('week').value=s.fecha;reset();save();
+};
+$('cancel').onclick=reset;$('week').onchange=render;$('all').onclick=()=>{$('week').value='';render()};
+$('template').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csvFields.join(',')+'\r\n'],{type:'text/csv;charset=utf-8'}));a.download='shift-template.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
+$('upload').onclick=()=>$('file').click();
+function parse(text){
+ const separator=text.split(/\r?\n/,1)[0].includes(';')?';':',';
+ const rows=[];let row=[],cell='',quoted=false;
+ for(let i=0;i<text.length;i++){
+  const c=text[i];
+  if(c==='"'){if(quoted&&text[i+1]==='"'){cell+='"';i++}else quoted=!quoted}
+  else if(!quoted&&(c===separator||c==='\n')){row.push(cell.trim());cell='';if(c==='\n'){rows.push(row);row=[]}}
+  else cell+=c;
+ }
+ if(quoted)throw Error('The CSV contains an unclosed quoted field.');
+ row.push(cell.trim());rows.push(row);return rows.filter(r=>r.some(Boolean))
+}
+$('file').onchange=async e=>{const file=e.target.files[0];if(!file)return;
+ try{
+  const [header,...rows]=parse((await file.text()).replace(/^\ufeff/,''));
+  const indexes=fields.map((f,i)=>header?.findIndex(h=>[f,csvFields[i]].includes(h.toLowerCase()))??-1);
+  if(indexes.includes(-1))throw Error('Use the template headers: '+csvFields.join(', ')+'.');
+  const shifts=rows.map((row,i)=>{const s=Object.fromEntries(fields.map((f,j)=>[f,row[indexes[j]]||'']));s.email=s.email.toLowerCase();
+   const match=s.fecha.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})$/);
+   if(match){const [,day,month,year]=match;s.fecha=(year.length===2?'20'+year:year)+'-'+month.padStart(2,'0')+'-'+day.padStart(2,'0')}
+   for(const f of ['inicio','fin']){
+    const time=s[f].match(/^(\d{1,2})[:.](\d{2})(?::00)?\s*(AM|PM)?$/i);
+    if(!time)continue;
+    const [,hours,minutes,period]=time;
+    let hour=Number(hours);
+    if(period){
+     if(hour<1||hour>12)continue;
+     hour=hour%12+(period.toUpperCase()==='PM'?12:0);
+    }
+    s[f]=String(hour).padStart(2,'0')+':'+minutes;
+   }
+   const fail=(column,help)=>{throw Error('Data row '+(i+1)+' · '+column+': '+help)};
+   if(!s.nombre)fail('Employee','Enter the employee name.');
+   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.email))fail('Email','Enter a valid email address.');
+   const date=new Date(s.fecha+'T12:00');
+   if(!/^\d{4}-\d{2}-\d{2}$/.test(s.fecha)||isNaN(date)||iso(date)!==s.fecha)fail('Date','Enter a valid date, for example 2026-11-16.');
+   for(const [field,label] of [['inicio','Start'],['fin','End']]){
+    if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(s[field]))fail(label,'Enter a time, for example 09:00 or 9:00 AM.');
+   }
+   if(s.inicio===s.fin)fail('End','Enter an end time different from the start time.');
+   return s});
+  const count=shifts.filter(add).length;$('week').value='';$('status').textContent=count+' shifts imported · '+(shifts.length-count)+' duplicates skipped.';save();
+ }catch(err){$('status').textContent=err.message}finally{e.target.value=''}
+};
+render();
+</script></html>
