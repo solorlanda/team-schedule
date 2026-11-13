@@ -120,7 +120,10 @@ http.createServer(async (req, res) => {
     if (!configured) return send(503, 'Manager sign-in is awaiting configuration.');
     const cookies = Object.fromEntries((req.headers.cookie || '').split(/;\s*/).filter(v => v.includes('=')).map(v => v.split('=', 2)));
     if (req.method === 'POST' && url.pathname === '/logout') return redirect('/', [cookie('__Host-manager', '', 0)]);
-    if (['/availability','/availability/respond'].includes(url.pathname)) return await availability(req,res,url,cookies,send);
+    if (['/availability','/availability/respond'].includes(url.pathname)) {
+      res.setHeader('Referrer-Policy', 'same-origin');
+      return await availability(req,res,url,cookies,send);
+    }
     if (req.method !== 'GET') return send(405, 'Method not allowed.');
     if (url.pathname === '/login') {
       const state = randomBytes(32).toString('base64url');
